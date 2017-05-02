@@ -2,11 +2,11 @@
 
 cd "$HOME/B00merang/unam OS/Apps/unam-menu"
 
-read -rsn1 -t 0.2 "key"
+# read -rsn1 -t 0.2 "key"
 
 # si pas de raccourci
 # if [ -z $key ]; then
- ./unam-menu.py
+ ./umenu.py
 # fi
 
 # read -rsn1 "key"
