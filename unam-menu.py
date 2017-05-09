@@ -3,156 +3,336 @@
 import gi
 import os
 import re
+import sys
 import threading
 import subprocess
+import setproctitle
 
 gi.require_version('Gtk', '3.0')
+from gi.repository import Gtk, Gdk, Pango, Gio
+setproctitle.setproctitle('unam-menu-service')
 
-from gi.repository import Gtk
+# Files
+home = os.getenv("HOME") + '/'
+applications = '/usr/share/applications/.'
+running = home + '.config/unam/unam-menu/running'
+log_file = home + '.config/unam/unam-menu/logs/log'
 
+gfile = Gio.File.new_for_path(running)
+gapps = Gio.File.new_for_path(applications)
+
+monitor = gfile.monitor_file(Gio.FileMonitorFlags.NONE, None)
+dir_changed = gfile.monitor_directory(Gio.FileMonitorFlags.NONE, None)
+
+def get_screen_size(x, y):
+    display = subprocess.Popen('xrandr | grep "\*" | cut -d" " -f4',shell=True,stdout=subprocess.PIPE).communicate()[0]
+    display = str(display.rstrip())[2:-1]
+    display = display.split('x')
+    
+    if x == True and y == True:
+        return display
+    elif x == True and y == False:
+        return display[0]
+    elif x == False and y == True:
+        return display[1]
+    elif x == False and y == False:
+        return display[0] + 'x' + display[1]
+
+def set_position(self, x, y):
+    self.move(x,y)
+    
 def log(message):
-    file = "/home/elbullazul/.config/unam/unam-menu/logs/log"
+    with open(log_file, "a") as logfile:
+        logfile.write(message + '\n')
 
-    with open(file, "a") as logfile:
-        logfile.write(message)
+class spacer():
+    def __init__(self):
+        self.box = Gtk.Box()
+        self.label = Gtk.Label('')
+        self.box.add(self.label)
+        #self.box.set_sensitive(False)
+        
+    def get_box(self):
+        return self.box
+        
+class appbutton():
+    def __init__(self):
+        self.button = Gtk.Button()
+        self.label = Gtk.Label()
+        self.icon = Gtk.Image()
+        self.layoutbox = Gtk.VBox()
+        self.command = ''
+        
+        self.build()
+        
+    def build(self):
+        self.flat()
+        self.label.set_alignment(0.5,0.5)
+        self.button.set_hexpand(True)
+        self.layoutbox.add(self.icon)
+        self.layoutbox.add(self.label)
+        self.button.add(self.layoutbox)
+        
+    def construct(self, icon_name, label_text, tooltip_text, command):
+        self.set_icon(icon_name, Gtk.IconSize.DIALOG)
+        self.set_label(label_text)
+        self.set_tooltip(tooltip_text)
+        self.set_command(command)
+        
+    def flat(self):
+        classes = self.button.get_style_context()
+        classes.add_class('flat')
+        
+    def on_click(self, button, cmd):
+        os.system(cmd + ' &')
+        log('App launched: ' + cmd)
+        menu.invisible(None, None)
+        
+    def set_icon(self, icon_name, icon_size):
+        self.icon.set_from_icon_name(icon_name, icon_size)
+        
+    def get_icon(self):
+        return self.icon.get_from_icon_name()
+        
+    def set_label(self, text):
+        self.label.set_text(text)
+        
+    def get_label(self):
+        return self.label.get_text()
+        
+    def set_tooltip(self, text):
+        self.button.set_tooltip_text(text)
+        
+    def get_tooltip(self):
+        return self.button.get_tooltip_text()
+        
+    def set_command(self, cmd):
+        self.command = cmd
+        self.button.connect('clicked', self.on_click, cmd)
+        
+    def get_command(self):
+        return self.command
+        
+    def get_button(self):
+        return self.button
+        
+    def get_info(self):
+        return self.get_label(), self.get_command(), self.get_tooltip() #, self.get_icon()
 
 class unam_menu(Gtk.Window):
-
     def __init__(self):
         Gtk.Window.__init__(self, title="Unam Menu")
+    
+        self.icon = Gtk.Image()
+        self.icon.set_from_icon_name('app-launcher', Gtk.IconSize.MENU)
+    
+        self.visible = False
+        self.no_search = True
+        self.trigger = monitor
+        self.update = dir_changed
+
+        # keyboard shortcuts
+        accel = Gtk.AccelGroup()
+        accel.connect(Gdk.keyval_from_name('Q'), Gdk.ModifierType.CONTROL_MASK, 0, Gtk.main_quit)
+        self.add_accel_group(accel)
+
+        self.connect("delete-event", Gtk.main_quit)
+        self.connect('focus-out-event', self.invisible)
+        self.connect('key_press_event', self.on_key_press)
+        self.trigger.connect("changed", self.toggle_visible)
+        self.trigger.connect('changed', self.update_list)
 
         self.semaphore = threading.Semaphore(4)
         self.wrapper = Gtk.VBox()
         self.scrollbox = Gtk.ScrolledWindow()
         self.scrollframe = Gtk.Viewport()
         self.box = Gtk.Box(spacing=6)   
-        self.spacer = Gtk.Box()
+        self.spacer_left = Gtk.Box()
+        self.spacer_right = Gtk.Box()
         self.controlbox = Gtk.HBox(spacing=2)
-
+        self.searchbox = Gtk.Box(spacing=20)
         self.btn_quit = Gtk.Button()
         self.icon = Gtk.Image()
-        self.icon.set_from_icon_name('gtk-close', Gtk.IconSize.DIALOG)
-        self.btn_quit.add(self.icon)
-
-        classes = self.btn_quit.get_style_context()
-        classes.add_class('flat')
-
         self.app_grid = Gtk.Grid()
-
+        self.search_entry = Gtk.Entry()
+        
         self.add(self.wrapper)
-        self.controlbox.pack_start(self.spacer, True, True, 0)
-        self.controlbox.pack_start(self.btn_quit, False, False, 0)
+        self.controlbox.pack_start(self.spacer_left, True, True, 0)
+        self.controlbox.pack_start(self.search_entry, True, True, 0)
+        self.controlbox.pack_start(self.spacer_right, True, True, 0)
+        self.spacer_right.add(self.btn_quit)
         self.wrapper.pack_start(self.controlbox, False, False, 0)
         self.wrapper.pack_start(self.scrollbox, True, True, 0)
         self.scrollbox.add(self.scrollframe)
         self.scrollframe.add(self.box)
-
         self.box.add(self.app_grid)
+        self.btn_quit.add(self.icon)
+        
+        self.spacer_right.set_halign(Gtk.Align.END)
+        self.icon.set_from_icon_name('gtk-close', Gtk.IconSize.MENU)
+        self.search_entry.set_icon_from_icon_name(1, 'search')
+        self.search_entry.set_icon_tooltip_text(1, 'Search for Applications')
+        self.search_entry.connect('changed', self.search)
+        self.search_entry.connect('activate', self.launch)
 
-        self.btn_quit.connect('clicked', Gtk.main_quit)
-        self.btn_list = []
+        classes = self.btn_quit.get_style_context()
+        classes.add_class('flat')
+        
+        self.app_list = []
+        
+        self.load_apps()
+        self.assemble()
+        self.configure()
+        
+        self.show_all()
+        self.set_focus()
+        
+    def update_list(self, m, f, o, event):
+        if event == Gio.FileMonitorEvent.CHANGES_DONE_HINT:
+            print('Updating...')
+            self.app_list = []
 
-        self.add_items()
-        self.build_menu()
+            self.load_apps()
+            self.clear()
+            self.assemble()
+            self.show_all()
+            
+    def load_apps(self):
+        app_count = 0
+        
+        apps = os.listdir(applications)
+        apps = sorted(apps)
+        log(str(apps))
 
-    def add_items(self):
+        #for file in os.listdir(applications):
+        for app in apps:
+            if os.path.isfile(os.path.join(applications, app)):
+                buffer = open(applications + '/' + app, "r")
 
-        path = '/usr/share/applications'
-        app_id = 0
-
-        for file in os.listdir(path):
-            # print(file)
-
-            if os.path.isfile(os.path.join(path, file)):
-
-                buffer = open(path + '/' + file, "r")
-                # print(buffer.read())
-
-                icon = "void"
                 name = "void"
+                icon = "void"
                 desc = "void"
                 cmd = "void"
 
                 for line in buffer:
                     if line.startswith("Icon="):
-                        icon = line
-                        icon = icon[5:]
-                        icon = icon.rstrip()
+                        icon = line[5:].rstrip()
                     if line.startswith("Name="):
-                        name = line
-                        name = name[5:]
-                        name = name.rstrip()
+                        name = line[5:].rstrip()
                     if line.startswith("Comment="):
-                        desc = line
-                        desc = desc[8:]
-                        desc = desc.rstrip()
+                        desc = line[8:].rstrip()
                     if line.startswith("Exec="):
-                        cmd = line
-                        cmd = cmd[5:]
-                        cmd = cmd.rstrip()
+                        cmd = line[5:].rstrip().lower()
+                        cmd = cmd.replace("%u","")
+                        cmd = cmd.replace("%f","")
 
                     if icon is not "void" and name is not "void" and cmd is not "void" and desc is not "void":
+                        btn_app = appbutton()
+                        btn_app.construct(icon, name, desc, cmd)
 
-                        self.image = Gtk.Image()
-                        self.image.set_from_icon_name(icon, Gtk.IconSize.DIALOG)
-
-                        self.btn_list.append(Gtk.Button())
-
-                        self.label = Gtk.Label(name, 12)
-                        self.layoutbox = Gtk.VBox()
-                        self.layoutbox.add(self.image)
-                        self.layoutbox.add(self.label)
-
-                        classes = self.btn_list[app_id].get_style_context()
-                        classes.add_class('flat')
-
-                        self.btn_list[app_id].add(self.layoutbox)
-                        self.btn_list[app_id].set_hexpand(True)
-                        self.btn_list[app_id].set_tooltip_text(desc)
-                        self.btn_list[app_id].connect("clicked" , self.button_click, cmd)
-
-                        app_id += 1
+                        self.app_list.append(btn_app)
+                        app_count += 1
 
                         icon = "void"
                         name = "void"
                         desc = "void"
                         cmd = "void"
-
-        log("Apps loaded")
-
-    def button_click(self, button, *data):
-        path = "/usr/bin/"
-        command = str(data)
-        command = command[2:]
-        command = command[:-3]
-
-        # Start process with new thread
-        with self.semaphore:
-                os.system(path + command)
-                log("App launched: " + command)
-
-    def build_menu(self):
-
+                        
+    def assemble(self):
         column = 1
         row = 1
-        items = len(self.btn_list)
-        for item in range(0, items):
-                self.app_grid.attach(self.btn_list[item], column, row, 1, 1)
-                if column == 3:
-                        column = 0
+        print(len(self.app_list))
+        for item in range(0, len(self.app_list)):
+            self.app_grid.attach(self.app_list[item].get_button(), column, row, 1, 1)
+            if column == 3:
+                column = 0
+                row += 1
+            column += 1
+            
+    def toggle_visible(self, m, f, o, event):
+        if event == Gio.FileMonitorEvent.CHANGES_DONE_HINT:
+            if self.visible:
+                self.invisible(None, None)
+            else:
+                self.visible = True
+                self.show_all()
+                self.set_focus()
+                
+    def set_focus(self):
+        self.present()
+        self.set_modal(True)
+        self.set_keep_above(True)
+            
+    def invisible(self, object, event):
+        self.hide()
+        self.visible = False
+        self.search_entry.set_text('')
+        self.no_search = True
+        
+    def configure(self):
+        self.set_decorated(False)
+        self.resize(660,600)
+        #self.set_size_request(350,5)
+        self.move(0, int(get_screen_size(False, True)))
+        self.set_skip_pager_hint(True)
+        self.set_skip_taskbar_hint(True)
+        #self.set_position(Gtk.WindowPosition.CENTER_ALWAYS)
+        
+    def on_key_press(self, widget, event):
+        key = Gdk.keyval_name(event.keyval)
+        if 'Escape' in key:
+            print(str(key))
+            self.invisible(None, None)
+        
+    def search(self, entry):
+        if self.search_entry.get_text() != '':
+            if self.no_search == True:
+                self.no_search = False
+            self.found = False
+            self.clear()
+            self.populate()
+            self.show_all()
+        else:
+            self.clear()
+            self.assemble()
+            self.show_all()
+        
+    def clear(self):
+        for widget in self.app_grid:
+            self.app_grid.remove(widget)
+
+    def populate(self):
+        apps = 0
+        row = 1
+        column = 1
+        query = self.search_entry.get_text()
+        if query != "":
+            for item in range(0, len(self.app_list)):
+                if query in str(self.app_list[item].get_info()):
+                    self.app_grid.attach(self.app_list[item].get_button(), column, row, 1,1)
+                    apps += 1
+                    self.found = True
+                    if column == 3:
                         row += 1
-                column += 1
-        log('Added items to menu')
+                        column = 0
+                    column += 1
+                    
+        if apps == 0:
+            label = Gtk.Label('No items found')
+            label.set_hexpand(True)
+            label.set_alignment(0.5,0)
+            self.found = False
+            self.app_grid.attach(label, 0, 0, 1,1)
 
+    def launch(self, *data):
+        if (self.found):
+            child = self.app_grid.get_children()
+            print(len(child))
+            child[len(child) - 1].grab_focus()
+            self.activate_focus()
+        else:
+            self.invisible(None, None)
+            
 menu = unam_menu()
-menu.set_decorated(False)
-
-menu.set_skip_taskbar_hint(True)
-menu.set_skip_pager_hint(True)
-
-menu.resize(660,600)
-menu.set_position(Gtk.WindowPosition.CENTER_ALWAYS)
-
-menu.connect("delete-event", Gtk.main_quit)
-menu.show_all()
+menu.invisible(None, None)
 Gtk.main()
