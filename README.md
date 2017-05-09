@@ -1,12 +1,16 @@
 # unam-menu
 Lightweight and simple app launcher for Unam OS
 
-**Info:** we're having issues launching the software in a new thread. Working on it...
+**Info:** you may have issues on app launching. Stil working on it...
 
 # How to use
-- Copy the Python script to /usr/bin and add execution privileges
+- Make a file in ~/.config/unam/unam-menu named running. It will trigger the show_menu event
+- Rename the python script to unam-menu-service
+- Copy the Python and bash scripts to /usr/bin and add execution privileges
+- Make the python script be run on startup
+- Configure keybind to execute unam-menu
+
+Now, the menu should pop up every time you press the configured keybind
 
 ### unam-menu in action
-![um](https://github.com/Unam-OS/unam-menu/blob/master/Screenshot%202017-05-01-15_28_15.png?raw=true)
-![um2](https://github.com/Unam-OS/unam-menu/blob/master/Screenshot%202017-05-01-15_28_00.png?raw=true)
-![um3](https://github.com/Unam-OS/unam-menu/blob/master/Screenshot%202017-05-01-15_28_01.png?raw=true)
+![um](http://unamos.weebly.com/uploads/1/6/8/1/16813022/screenshot-2017-05-02-18-39-37_orig.png)
