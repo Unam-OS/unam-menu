@@ -1,0 +1,4 @@
+#!/bin/bash
+
+running="$HOME/.config/unam/unam-menu/running"
+echo '0' > "$running" # activate trigger & show window
