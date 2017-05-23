@@ -8,6 +8,8 @@ Lightweight and simple app launcher for Unam OS
 - Make the python script be run on startup
 - **To show the menu, press Super+Q**
 
+*Also note that you can launch the menu in drawer mode (like Chrome OS) by launching the process with the '-d' flag*
+
 Now, the menu should pop up whenever you press the hotkey (hotkey customization coming soon)
 
 ### unam-menu in action
