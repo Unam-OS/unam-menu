@@ -13,12 +13,27 @@ gi.require_version('GLib', '2.0')
 gi.require_version('Keybinder', '3.0')
 from gi.repository import Gtk, Gdk, Pango, Gio, GLib, Keybinder
 
-setproctitle.setproctitle('unam-menu-service')
+setproctitle.setproctitle('unam-menu')
 
 # Files
 home = os.getenv("HOME") + '/'
 applications = '/usr/share/applications/'
 log_file = home + '.config/unam/unam-menu/log'
+
+def check_files():
+    global_conf = home + '.config/unam'
+    local_conf = home + '.config/unam/unam-menu'
+
+    if not os.path.isdir(global_conf):
+        print('Creating config folder')
+        os.makedirs(global_conf)
+        
+    if not os.path.isdir(local_conf):
+        print('Setting up config')
+        os.makedirs(local_conf)
+
+check_files()
+
 gapps = Gio.File.new_for_path(applications)
 dir_changed = gapps.monitor_directory(Gio.FileMonitorFlags.NONE, None)
 
@@ -37,7 +52,7 @@ def get_screen_size(x, y):
         return display[0] + 'x' + display[1]
 
 def log(message):
-    with open(log_file, "a") as logfile:
+    with open(log_file, "a+") as logfile:
         logfile.write(message + '\n')
 
 class spacer():
@@ -119,6 +134,7 @@ class unam_menu(Gtk.Window):
     _current_accel_name = None
 
     def __init__(self):
+        log('Initialized new instance')
         Gtk.Window.__init__(self, title="Unam Menu")
         
         self.icon = Gtk.Image()
@@ -175,6 +191,7 @@ class unam_menu(Gtk.Window):
         if len(sys.argv) > 1:
             if sys.argv[1] == '-d' or '--drawer':
                 print('Set to drawer mode')
+                log('Initialized in drawer mode. Configuring...')
                 self.drawer_mode = True
                 self.conf_drawer()
 
@@ -211,20 +228,19 @@ class unam_menu(Gtk.Window):
             Keybinder.unbind(self._current_accel_name)
             self._current_accel_name = None
         
-        log('Keybind in process')    
         Keybinder.bind(accel_name, self.on_hotkey_press)
         self._current_accel_name = accel_name
         #self.notify_hotkey_change(accel_name)
         
     def update_list(self, m, f, o, event):
         if event == Gio.FileMonitorEvent.CHANGES_DONE_HINT:
-            print('Updating...')
+            print('Updating app list')
             self.app_list = []
 
             self.load_apps()
             self.clear()
             self.assemble()
-            self.show_all()
+            #self.show_all()
             
     def load_apps(self):
         app_count = 0
