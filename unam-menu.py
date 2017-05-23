@@ -9,20 +9,18 @@ import subprocess
 import setproctitle
 
 gi.require_version('Gtk', '3.0')
-from gi.repository import Gtk, Gdk, Pango, Gio
+gi.require_version('GLib', '2.0')
+gi.require_version('Keybinder', '3.0')
+from gi.repository import Gtk, Gdk, Pango, Gio, GLib, Keybinder
+
 setproctitle.setproctitle('unam-menu-service')
 
 # Files
 home = os.getenv("HOME") + '/'
-applications = '/usr/share/applications/.'
-running = home + '.config/unam/unam-menu/running'
-log_file = home + '.config/unam/unam-menu/logs/log'
-
-gfile = Gio.File.new_for_path(running)
+applications = '/usr/share/applications/'
+log_file = home + '.config/unam/unam-menu/log'
 gapps = Gio.File.new_for_path(applications)
-
-monitor = gfile.monitor_file(Gio.FileMonitorFlags.NONE, None)
-dir_changed = gfile.monitor_directory(Gio.FileMonitorFlags.NONE, None)
+dir_changed = gapps.monitor_directory(Gio.FileMonitorFlags.NONE, None)
 
 def get_screen_size(x, y):
     display = subprocess.Popen('xrandr | grep "\*" | cut -d" " -f4',shell=True,stdout=subprocess.PIPE).communicate()[0]
@@ -38,9 +36,6 @@ def get_screen_size(x, y):
     elif x == False and y == False:
         return display[0] + 'x' + display[1]
 
-def set_position(self, x, y):
-    self.move(x,y)
-    
 def log(message):
     with open(log_file, "a") as logfile:
         logfile.write(message + '\n')
@@ -120,27 +115,31 @@ class appbutton():
         return self.get_label(), self.get_command(), self.get_tooltip() #, self.get_icon()
 
 class unam_menu(Gtk.Window):
+
+    _current_accel_name = None
+
     def __init__(self):
         Gtk.Window.__init__(self, title="Unam Menu")
-    
+        
         self.icon = Gtk.Image()
         self.icon.set_from_icon_name('app-launcher', Gtk.IconSize.MENU)
-    
+        
+        self.drawer_mode = False
         self.visible = False
         self.no_search = True
-        self.trigger = monitor
         self.update = dir_changed
 
         # keyboard shortcuts
         accel = Gtk.AccelGroup()
         accel.connect(Gdk.keyval_from_name('Q'), Gdk.ModifierType.CONTROL_MASK, 0, Gtk.main_quit)
         self.add_accel_group(accel)
+        self.bind_hotkey()
 
         self.connect("delete-event", Gtk.main_quit)
-        self.connect('focus-out-event', self.invisible)
+        self.connect('focus-in-event', self.on_focus_in)
+        self.connect('focus-out-event', self.on_focus_out)
         self.connect('key_press_event', self.on_key_press)
-        self.trigger.connect("changed", self.toggle_visible)
-        self.trigger.connect('changed', self.update_list)
+        self.update.connect('changed', self.update_list)
 
         self.semaphore = threading.Semaphore(4)
         self.wrapper = Gtk.VBox()
@@ -151,8 +150,6 @@ class unam_menu(Gtk.Window):
         self.spacer_right = Gtk.Box()
         self.controlbox = Gtk.HBox(spacing=2)
         self.searchbox = Gtk.Box(spacing=20)
-        self.btn_quit = Gtk.Button()
-        self.icon = Gtk.Image()
         self.app_grid = Gtk.Grid()
         self.search_entry = Gtk.Entry()
         
@@ -160,32 +157,64 @@ class unam_menu(Gtk.Window):
         self.controlbox.pack_start(self.spacer_left, True, True, 0)
         self.controlbox.pack_start(self.search_entry, True, True, 0)
         self.controlbox.pack_start(self.spacer_right, True, True, 0)
-        self.spacer_right.add(self.btn_quit)
         self.wrapper.pack_start(self.controlbox, False, False, 0)
         self.wrapper.pack_start(self.scrollbox, True, True, 0)
         self.scrollbox.add(self.scrollframe)
         self.scrollframe.add(self.box)
         self.box.add(self.app_grid)
-        self.btn_quit.add(self.icon)
-        
+
         self.spacer_right.set_halign(Gtk.Align.END)
-        self.icon.set_from_icon_name('gtk-close', Gtk.IconSize.MENU)
         self.search_entry.set_icon_from_icon_name(1, 'search')
         self.search_entry.set_icon_tooltip_text(1, 'Search for Applications')
         self.search_entry.connect('changed', self.search)
         self.search_entry.connect('activate', self.launch)
 
-        classes = self.btn_quit.get_style_context()
-        classes.add_class('flat')
-        
         self.app_list = []
         
+        # Drawer mode
+        if len(sys.argv) > 1:
+            if sys.argv[1] == '-d' or '--drawer':
+                print('Set to drawer mode')
+                self.drawer_mode = True
+                self.conf_drawer()
+
         self.load_apps()
         self.assemble()
         self.configure()
         
         self.show_all()
         self.set_focus()
+        
+    def conf_drawer(self):
+        self.btn_quit = Gtk.Button()
+        self.btn_quit.icon = Gtk.Image()
+
+        self.btn_quit.add(self.btn_quit.icon)
+        self.spacer_right.add(self.btn_quit)
+        self.btn_quit.icon.set_from_icon_name('gtk-close', Gtk.IconSize.MENU)
+
+        classes = self.btn_quit.get_style_context()
+        classes.add_class('flat')
+        
+    def bind_hotkey(self): # thanks ulauncher
+        Keybinder.init()
+        accel_name = "<Super>Q" # <Primary> <Control> <Alt> <Shift>
+        
+        # bind in the main thread
+        GLib.idle_add(self.set_hotkey, accel_name)
+
+    def unbind(self, accel_name):
+        Keybinder.unbind(accel_name)
+
+    def set_hotkey(self, accel_name):
+        if self._current_accel_name:
+            Keybinder.unbind(self._current_accel_name)
+            self._current_accel_name = None
+        
+        log('Keybind in process')    
+        Keybinder.bind(accel_name, self.on_hotkey_press)
+        self._current_accel_name = accel_name
+        #self.notify_hotkey_change(accel_name)
         
     def update_list(self, m, f, o, event):
         if event == Gio.FileMonitorEvent.CHANGES_DONE_HINT:
@@ -202,7 +231,6 @@ class unam_menu(Gtk.Window):
         
         apps = os.listdir(applications)
         apps = sorted(apps)
-        log(str(apps))
 
         #for file in os.listdir(applications):
         for app in apps:
@@ -248,42 +276,58 @@ class unam_menu(Gtk.Window):
                 column = 0
                 row += 1
             column += 1
-            
-    def toggle_visible(self, m, f, o, event):
-        if event == Gio.FileMonitorEvent.CHANGES_DONE_HINT:
-            if self.visible:
-                self.invisible(None, None)
-            else:
-                self.visible = True
-                self.show_all()
-                self.set_focus()
-                
+
+    def on_hotkey_press(self, event):
+        if self.visible:
+            self.invisible(None, None)
+        else:
+            self.set_visible(None, None)
+        
     def set_focus(self):
         self.present()
         self.set_modal(True)
         self.set_keep_above(True)
             
+    def set_visible(self, object, event):
+        self.show_all()
+        self.set_focus()
+        self.search_entry.grab_focus()
+        self.visible = True
+        print('toggle visible')
+
     def invisible(self, object, event):
         self.hide()
-        self.visible = False
         self.search_entry.set_text('')
         self.no_search = True
+        self.visible = False
+        print('toggle invisible')
         
     def configure(self):
         self.set_decorated(False)
         self.resize(660,600)
-        #self.set_size_request(350,5)
-        self.move(0, int(get_screen_size(False, True)))
         self.set_skip_pager_hint(True)
         self.set_skip_taskbar_hint(True)
-        #self.set_position(Gtk.WindowPosition.CENTER_ALWAYS)
+        #self.set_size_request(350,5)
+        
+        if self.drawer_mode:
+            self.set_position(Gtk.WindowPosition.CENTER_ALWAYS)
+            self.set_gravity(Gdk.Gravity.CENTER)
+        else:
+            self.move(0, int(get_screen_size(False, True)))
         
     def on_key_press(self, widget, event):
         key = Gdk.keyval_name(event.keyval)
         if 'Escape' in key:
             print(str(key))
             self.invisible(None, None)
-        
+
+    def on_focus_in(self, widget, event):
+        self.visible = True
+
+    def on_focus_out(self, widget, event):
+        t = threading.Timer(0.07, lambda: not self.visible or self.invisible(None, None))
+        t.start()
+
     def search(self, entry):
         if self.search_entry.get_text() != '':
             if self.no_search == True:
